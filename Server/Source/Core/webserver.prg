@@ -159,6 +159,47 @@ DEFINE CLASS WebServer AS CUSTOM
 		endif
 
 		do case
+		case This.Request.Upgrade = "websocket" && WebSocket upgrade
+			*--- URI points to a folder, set to ws.fxp
+			do case
+			case right(This.Request.Document_URI,1) = "/" 
+				This.Request.Document_URI = This.Request.Document_URI+This.SiteIndex
+			case empty(justext(This.Request.Document_URI)) AND directory(This.Directory+This.Request.Document_URI)
+				This.Request.Document_URI = This.Request.Document_URI+"/"+This.SiteIndex
+			endcase
+
+*!*				*--- URI not found
+*!*				if !file(This.Directory+This.Request.Document_URI)
+*!*					This.SendError("404","Not Found","Not Found")
+*!*					return .T.
+*!*				endif
+
+			*--- Create WebSocket Processor
+			This.Parent.NewObject("WebSocket","WebSocket","core\websocket.fxp")
+
+			*--- Set WebSocket properties
+			This.Parent.WebSocket.Directory		= This.Directory
+			This.Parent.WebSocket.Document_URI	= This.Request.Document_URI
+
+			*--- Set response properties
+			This.Response.Status_Code			= "101"
+			This.Response.Status_Description	= "Switching Protocols"
+			This.Response.Connection			= "Upgrade"
+			This.Response.Upgrade				= "websocket"
+
+*!*				*--- Enable compression
+*!*				if "permessage-deflate" $ This.Request.Sec_WebSocket_Extensions
+*!*					*--- Set Websocket compression
+*!*					This.Parent.WebSocket.Compression = .T.
+
+*!*					*--- Send Websocket compresion response header
+*!*					This.Response.Sec_WebSocket_Extensions = "permessage-deflate; client_no_context_takeover; server_no_context_takeover"
+*!*				endif
+
+			*--- Generate WebSocket accept key
+			if !empty(This.Request.Sec_WebSocket_Key)
+				This.Response.Sec_WebSocket_Accept = strconv(hash(This.Request.Sec_WebSocket_Key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11",1),13)
+			endif
 		case This.Request.X_Requested_With = "XMLHttpRequest" AND ; && REST Request
 			 (("application/json" $ This.Request.Accept AND justext(This.Request.Document_URI) # "json") OR ; 
 			 ("application/xml" $ This.Request.Accept AND justext(This.Request.Document_URI) # "xml"))
@@ -474,13 +515,17 @@ DEFINE CLASS WebServer AS CUSTOM
 		endif
 
 		*--- Connection
-		if This.Parent.KeepAlive = 1 AND lower(This.Response.Connection) == "keep-alive" AND !This.Parent.Queued
+		do case
+		case This.Response.Connection = "Upgrade"
+			This.Response.Header = This.Response.Header + "Connection: Upgrade"+CRLF
+			This.Parent.IsClosing = .F.
+		case This.Parent.KeepAlive = 1 AND lower(This.Response.Connection) == "keep-alive" AND !This.Parent.Queued
 			This.Response.Header = This.Response.Header + "Connection: keep-alive"+CRLF
 			This.Parent.IsClosing = .F.
-		else
+		otherwise
 			This.Response.Header = This.Response.Header + "Connection: close"+CRLF
 			This.Parent.IsClosing = .T.
-		endif
+		endcase
 
 		*--- Cache-control
 		if !empty(This.Response.Cache_Control)
@@ -516,7 +561,7 @@ DEFINE CLASS WebServer AS CUSTOM
 		endif
 
 		*--- Content-Length
-		if This.Response.Transfer_Encoding # "chunked"
+		if This.Response.Transfer_Encoding # "chunked" AND This.Response.Connection # "Upgrade"
 			if !empty(This.Response.FileName)
 				This.Response.Header = This.Response.Header + "Content-Length: "+alltrim(str(GetFileSize(This.Response.FileName)))+CRLF
 			else
@@ -559,9 +604,24 @@ DEFINE CLASS WebServer AS CUSTOM
 			This.Response.Header = This.Response.Header + "Pragma: "+This.Response.Pragma+CRLF
 		endif
 
+		*--- Sec-WebSocket-Accept
+		if !empty(This.Response.Sec_WebSocket_Accept)
+			This.Response.Header = This.Response.Header + "Sec-WebSocket-Accept: "+This.Response.Sec_WebSocket_Accept+CRLF
+		endif
+
+		*--- Sec-WebSocket-Extensions
+		if !empty(This.Response.Sec_WebSocket_Extensions)
+			This.Response.Header = This.Response.Header + "Sec-WebSocket-Extensions: "+This.Response.Sec_WebSocket_Extensions+CRLF
+		endif
+
 		*--- Transfer-Encoding
 		if !empty(This.Response.Transfer_Encoding)
 			This.Response.Header = This.Response.Header + "Transfer-Encoding: "+This.Response.Transfer_Encoding+CRLF
+		endif
+
+		*--- Upgrade
+		if !empty(This.Response.Upgrade)
+			This.Response.Header = This.Response.Header + "Upgrade: "+This.Response.Upgrade+CRLF
 		endif
 
 		*--- Vary
@@ -790,41 +850,43 @@ DEFINE CLASS Request AS CUSTOM
 	HIDDEN BaseClass,ClassLibrary,Class,Comment,ControlCount,Controls,Height,HelpContextID,Left,Objects,Parent,ParentClass,Picture,Tag,Top,WhatsThisHelpID,Width
 
 	*--- Request properties
-	Accept					= ""
-	Accept_Encoding			= ""
-	Authorization			= ""
-	Connection				= ""
-	Content					= ""
-	Content_Length			= ""
-	Content_Type			= ""
-	Cookie					= ""
-	Data					= ""
-	Document_Root			= ""
-	Document_URI			= ""
-	Gateway_Interface		= ""
-	Host					= ""
-	ID						= ""
-	If_Modified_Since		= ""
-	Method					= ""
-	Query_String			= ""
-	Range					= ""
-	Referer					= ""
-	Remote_Address			= ""
-	Remote_Port				= ""
-	ReqID					= 0
-	Request_Scheme			= ""
-	Request_URI				= ""
-	Role					= 0
-	Script_Name				= ""
-	Script_FileName 		= ""
-	Server_Address			= ""
-	Server_Name				= ""
-	Server_Port				= ""
-	Server_Protocol			= ""
-	Server_Software			= ""
-	Type					= 0
-	User_Agent				= ""
-	X_Requested_With        = ""
+	Accept						= ""
+	Accept_Encoding				= ""
+	Authorization				= ""
+	Connection					= ""
+	Content						= ""
+	Content_Length				= ""
+	Content_Type				= ""
+	Cookie						= ""
+	Data						= ""
+	Document_Root				= ""
+	Document_URI				= ""
+	Gateway_Interface			= ""
+	Host						= ""
+	ID							= ""
+	If_Modified_Since			= ""
+	Method						= ""
+	Query_String				= ""
+	Range						= ""
+	Referer						= ""
+	Remote_Address				= ""
+	Remote_Port					= ""
+	ReqID						= 0
+	Request_Scheme				= ""
+	Request_URI					= ""
+	Role						= 0
+	Script_Name					= ""
+	Script_FileName 			= ""
+	Sec_WebSocket_Extensions	= ""
+	Server_Address				= ""
+	Server_Name					= ""
+	Server_Port					= ""
+	Server_Protocol				= ""
+	Server_Software				= ""
+	Type						= 0
+	User_Agent					= ""
+	Upgrade                 	= ""
+	X_Requested_With    	    = ""
 
 	*--- Resquest objects
 	ADD OBJECT Cookies   AS Cookies && Cookies container object
@@ -844,27 +906,30 @@ DEFINE CLASS Response AS CUSTOM
 	HIDDEN BaseClass,ClassLibrary,Class,Comment,ControlCount,Controls,Height,HelpContextID,Left,Objects,Parent,ParentClass,Picture,Tag,Top,WhatsThisHelpID,Width
 
 	*--- Response properties
-	Allow				= ""
-	Authenticate		= ""
-	Bytes				= 0
-	Cache_Control		= ""
-	Connection			= ""
-	Content				= ""
-	Content_Disposition	= ""
-	Content_Encoding	= ""
-	Content_Range		= ""
-	Content_Type		= ""
-	Expires				= {}
-	FileName			= ""
-	Header				= ""
-	Last_Modified		= {}
-	Location			= ""
-	Output				= ""
-	Pragma				= ""
-	Status_Code			= ""
-	Status_Description	= ""
-	Transfer_Encoding	= ""
-	Vary				= ""
+	Allow						= ""
+	Authenticate				= ""
+	Bytes						= 0
+	Cache_Control				= ""
+	Connection					= ""
+	Content						= ""
+	Content_Disposition			= ""
+	Content_Encoding			= ""
+	Content_Range				= ""
+	Content_Type				= ""
+	Expires						= {}
+	FileName					= ""
+	Header						= ""
+	Last_Modified				= {}
+	Location					= ""
+	Output						= ""
+	Pragma						= ""
+	Sec_WebSocket_Accept		= ""
+	Sec_WebSocket_Extensions	= ""
+	Status_Code					= ""
+	Status_Description			= ""
+	Transfer_Encoding			= ""
+	Upgrade						= ""
+	Vary						= ""
 
 	*--- Resquest objects
 	ADD OBJECT SettingCookies AS CUSTOM && Sending cookies container object

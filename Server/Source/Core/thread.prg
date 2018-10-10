@@ -20,6 +20,7 @@ DEFINE CLASS Thread AS CUSTOM OLEPUBLIC
 	Type				= ""
 	Queued				= .F.
 	Password            = ""
+	Received			= ""
 	Compression         = 0
 	RemoteHost			= ""
 	RemotePort			= 0
@@ -28,6 +29,7 @@ DEFINE CLASS Thread AS CUSTOM OLEPUBLIC
 	ServerName			= ""
 	StartMode			= 0
 	ThreadIndex			= 0
+	Upgrade             = ""
 
 	HIDDEN PROCEDURE Init()
 		*--- Put ActiveX events in queue.
@@ -219,6 +221,8 @@ DEFINE CLASS Thread AS CUSTOM OLEPUBLIC
 					This.Continue()
 				endif
 			endif
+		case This.Type = "WebSocket" && WebSocket
+			This.Websocket.Process()
 		case This.Type = "TUNNEL" && Tunnel Entry Points
 			if type("This.Tunnel") # "O"
 				*--- Create Tunnel object
